@@ -10,3 +10,5 @@ The dataset used for this project was read directly from the NFL Big Data Bowlâ€
 
 Several models were fit using quarter, down, time remaining, first down distance, score differential, and distance from endzone. The results of the models are grouped together in the graph below:
 
+![Model Comparison](models.png)
+
