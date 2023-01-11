@@ -27,7 +27,7 @@ As the difference between the offense’s score and the defense’s score increa
 
 The next step of the project was building three new models: one to predict the expected yards gained for a completion, one to calculate the probability of completing a pass, and another to predict expected yards gained for a run. Expected passing yards was calculated using the following formula:
 
-$Exp.Passing Yards = Predicted Passing Yards * Predicted Completion Probability$
+$Expected.Passing Yards = Predicted.Passing Yards * Predicted.Completion Probability$
 
 The average yards per completion in the NFL over the first six weeks of the 2017 season was eleven yards and the average yards per run over that same span was around four yards, so to no surprise, the predicted passing yards was almost always larger than predicted running yards. However, when the probability of completing a pass was taken into account the difference in expected yards gained for both a pass and a run only differed by a yard on average and in some cases, runs were identified as better than passes. These scenarios often occurred when the offense was either at the goal line or close to their own endzone where passing is very risky. The average pass completion probability from the model was 63% and, in the NFL, the average completion percentage is around 67% so the model isn’t far off from the actual average. 
 
