@@ -1,0 +1,512 @@
+---
+title: "NFL"
+author: "Daniel Antantis"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(MASS)
+library(glmnet)
+library(caret)
+library(randomForest)
+```
+
+```{r}
+file.tracking <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/plays.csv"
+raw.data <- read_csv(file.tracking)
+```
+
+Extract Home Team and Visitor Team to determine the score based on who has possession.
+```{r}
+home.scoring = raw.data %>% 
+  filter(!grepl("INTERCEPTED", playDescription) & !grepl("SAFETY", playDescription)) %>% #eliminate defensive scores
+  filter(!grepl("FUMBLES", playDescription)) %>% 
+  filter(HomeScoreBeforePlay != HomeScoreAfterPlay) %>% #home team scored
+  mutate(
+    HomeTeam = possessionTeam
+  ) %>% 
+  group_by(gameId) %>% 
+  summarise(HomeTeam = HomeTeam) %>% 
+  distinct(gameId, .keep_all = TRUE) 
+away.scoring = raw.data %>% 
+  filter(!grepl("INTERCEPTED", playDescription) & !grepl("SAFETY", playDescription)) %>% 
+  filter(!grepl("FUMBLES", playDescription)) %>% 
+  filter(VisitorScoreBeforePlay != VisitorScoreAfterPlay) %>% 
+  mutate(
+    VisitorTeam = possessionTeam
+  ) %>% 
+  group_by(gameId) %>% 
+  summarise(VisitorTeam = VisitorTeam) %>% 
+  distinct(gameId, .keep_all = TRUE)
+```
+
+Store the home and away teams for each game
+```{r}
+teams = away.scoring %>% 
+  left_join(home.scoring, by = "gameId")
+length(unique(teams$gameId)) # total amount of games
+```
+
+Add new team data to original dataset and fill in for games where teams were shutout
+```{r}
+data = raw.data %>% 
+  left_join(teams, by = "gameId")
+missing = data %>% 
+  filter(is.na(HomeTeam) | is.na(VisitorTeam)) %>% 
+  group_by(gameId) %>% 
+  summarise(gameId = gameId, possessionTeam = possessionTeam, HomeTeam = HomeTeam, VisitorTeam  = VisitorTeam)
+missing$HomeTeam = ifelse(missing$possessionTeam != missing$VisitorTeam, missing$possessionTeam, NA)
+teams$HomeTeam = ifelse(is.na(teams$HomeTeam), missing$HomeTeam, teams$HomeTeam)
+```
+
+Formulate score into a continuous variable for model prediction
+```{r}
+data$offense_score = ifelse(data$possessionTeam == data$HomeTeam, data$HomeScoreBeforePlay, data$VisitorScoreBeforePlay)
+data$defense_score = ifelse(data$possessionTeam == data$HomeTeam, data$VisitorScoreBeforePlay, data$HomeScoreBeforePlay)
+data$score_diff = data$offense_score - data$defense_score # positive = winning, negative = losing
+```
+
+Remove Special Teams plays
+```{r}
+data = data %>% 
+  filter(isSTPlay == FALSE) %>% #removes designated special team plays such as field goals and punts
+  filter(down != 0) # removes extra points and kickoffs 
+```
+
+Transform the yardline variable so that we know which side of the field the ball is on. Substitute NA values for the 50 yard line distance
+```{r}
+data$yardsToEndzone = ifelse(data$possessionTeam == data$yardlineSide, 100 - data$yardlineNumber, data$yardlineNumber)
+data$yardsToEndzone = ifelse(is.na(data$yardsToEndzone), 50, data$yardsToEndzone)
+data = subset(data, select = -c(yardlineNumber))
+```
+
+Extract offense position player count
+```{r}
+data$rb.count = substr(data$personnel.offense, 1,2)
+data$te.count = substr(data$personnel.offense, 6,7)
+data$wr.count = substr(data$personnel.offense, 12,13)
+data = subset(data, select = -c(personnel.offense))
+```
+
+
+Transform game clock to time remaining.
+```{r}
+data$GameClock = ifelse(data$quarter != 5, (4-data$quarter) * 15 + as.numeric(substr(data$GameClock, 1, 2)) + as.numeric(substr(data$GameClock, 4, 5))/60, as.numeric(substr(data$GameClock, 1, 2)) + as.numeric(substr(data$GameClock, 4, 5))/60)
+```
+
+Remove singular offensive formation
+```{r}
+data = subset(data, offenseFormation != "ACE")
+```
+
+Indicate the type of play, 0 for a run play and 1 for a passing play
+```{r}
+play_data = data
+play_data$playType = as.factor(ifelse(is.na(data$PassResult), 0,1))
+```
+
+Select only the variables that we care about in predicting the play call
+```{r}
+play_data = subset(play_data, select = c(playId, quarter, GameClock, down, yardsToGo, score_diff, yardsToEndzone, playType))
+```
+
+Remove missing data
+```{r}
+play_data = na.omit(play_data)
+```
+
+```{r}
+data = data %>% drop_na(c(playId, quarter, GameClock, down, yardsToGo, score_diff, yardsToEndzone))
+```
+
+
+#Down Breakdown
+```{r}
+ggplot(play_data, mapping = aes(x = as.factor(down))) + geom_bar(mapping = aes(fill = playType)) + theme_classic() + xlab("Down") + ggtitle("Number of Passes and Runs by Down") + scale_fill_discrete(labels=c("Run", "Pass"))
+```
+```{r}
+summary((play_data %>% filter(down == 1))$playType) #First Down
+summary((play_data %>% filter(down == 2))$playType) #Second Down
+summary((play_data %>% filter(down == 3))$playType) #Third Down
+summary((play_data %>% filter(down == 4))$playType) #Fourth Down
+```
+```{r}
+2481 / (2455 + 2481)
+2248 / (2488+1462)
+2002 / (2002+366)
+93 / (93+43)
+```
+
+
+#Quarter Breakdown
+```{r}
+ggplot(play_data, mapping = aes(x = as.factor(quarter))) + geom_bar(mapping = aes(fill = playType)) + theme_classic() + xlab("Quarter") + ggtitle("Number of Passes and Runs by Quarter") + scale_fill_discrete(labels=c("Run", "Pass"))
+```
+
+```{r}
+summary((play_data %>% filter(quarter == 1))$playType) #First Quarter
+summary((play_data %>% filter(quarter == 2))$playType) #Second Quarter
+summary((play_data %>% filter(quarter == 3))$playType) #Third Quarter
+summary((play_data %>% filter(quarter == 4))$playType) #Fourth Quarter
+```
+
+```{r}
+1402 / (1402 + 1132)
+1984 / (1984+1039)
+1520 / (1520+1040)
+1867 / (1073+1867)
+```
+
+#Yards to go
+```{r}
+ggplot(play_data, mapping = aes(x = yardsToGo)) + geom_bar(mapping = aes(fill = playType)) + xlab("Yards from 1st Down") + ggtitle("Number of Passes and Runs by Distance") + scale_fill_discrete(labels=c("Run", "Pass")) + theme_classic()
+```
+
+```{r}
+ggplot(play_data, mapping = aes(x = GameClock)) + geom_histogram() + facet_wrap(~playType)
+```
+
+
+#Outcome Breakdown
+```{r}
+ggplot(play_data, mapping = aes(x = playType)) + geom_bar() + theme_classic() + ggtitle("Run/Pass Breakdown") 
+```
+
+```{r}
+passes = sum(ifelse(play_data$playType == 1, 1, 0))
+passes / nrow(play_data)
+```
+
+
+#Model Training
+
+```{r}
+my_ctrl <- trainControl(method = 'repeatedcv', number = 5, repeats = 2)
+
+my_metric <- "Accuracy"
+```
+
+Linear Model
+```{r}
+set.seed(2022)
+lin1 = train(playType ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = play_data, method = "glm", trControl = my_ctrl, preProcess = c("center", "scale"))
+```
+
+```{r}
+lin1
+```
+
+Elastic Net Model
+```{r, warning=FALSE}
+set.seed(2022)
+enet.default = train(playType ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = play_data, method = "glmnet", trControl = my_ctrl, preProcess = c("center", "scale"))
+```
+
+Elastic Net Model w/ Interactions
+```{r, warning=FALSE}
+set.seed(2022)
+enet.complex = train(playType ~ (quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone)^2, data = play_data, method = "glmnet", trControl = my_ctrl, preProcess = c("center", "scale"))
+```
+
+
+```{r}
+enet.complex
+enet.default
+```
+```{r}
+coef(enet.complex$finalModel, enet.complex$bestTune$lambda)
+```
+
+No real difference between the complex model with interactions and the default model with only linear additive features. No features were turned off in elastic net so they all have some importance.
+
+Neural Network
+```{r, warning = FALSE}
+nnet = train(playType ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = play_data, method = "nnet", metric = my_metric, trControl = my_ctrl, preProcess = c("center", "scale"), maxiter = 501, trace = FALSE)
+```
+
+```{r}
+nnet
+```
+
+```{r}
+plot(varImp(nnet))
+```
+
+Gradient Boosted Tree
+```{r, warning=FALSE}
+play_data$type = ifelse(play_data$playType == 1, "pass", "run")
+set.seed(2022)
+xgb.base = train(type ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = play_data,
+                       method = "xgbTree",
+                       metric = my_metric,
+                       trControl = my_ctrl,
+                       objective = "binary:logistic",
+                       verbosity = 0)
+```
+
+```{r}
+xgb.base
+```
+
+```{r}
+plot(varImp(xgb.base))
+```
+
+
+#Compare Results
+```{r}
+my_results <- resamples(list(LM = lin1,
+                             ENET_Base = enet.default,
+                             ENET_COMPLEX = enet.complex,
+                             NNET = nnet,
+                             XGB = xgb.base))
+```
+
+```{r}
+dotplot(my_results, metric = my_metric)
+```
+
+
+Not going to get much better than 70% but the XGB model performed the best so that is what we'll use to predict play call.
+
+#Make Predictions
+```{r}
+data$pred = predict(xgb.base, data)
+```
+
+Probability of pass
+```{r}
+probs = predict(xgb.base, data, type = "prob")
+data$prob = probs$pass
+```
+
+
+Time Remaining
+```{r}
+ggplot(data, mapping = aes(x = GameClock, y = prob)) + geom_point()
+```
+The clock variable has a very interesting relationship with the response probability, specifically at around 30 minutes remaining since this the end of the first half and there is little time, the predicted probability of a pass was much higher than normal. The end of the game, with little time remaining, the same high predicted pass probability was also observed. There are also very low predicted pass probability cases with low time remaining, these cases are most likely winning teams trying run the clock out so that the game will end while they have possession of the ball.
+
+Down and Distance
+```{r}
+ggplot(data, mapping = aes(x = yardsToGo, y = prob)) + geom_point() + facet_wrap(~ down)
+```
+1st down had a high variability of pass probability (especially at 1st and 10). The other 3 downs all saw pass probability decrease as the distance from the first down line decreased. This result is what we would expect and is what is very common in the NFL.
+
+```{r}
+ggplot(data, mapping = aes(x = score_diff, y = prob)) + geom_point() 
+```
+The trend line for score differential and the pass probability had a negative relationship, so as the offensive team gained the lead, the likelihood of them passing also went down. This remains consistent with most NFL team's strategies since passing saves time on the clock it is best to pass when losing, and vice versa for winning teams who are trying to waste as much time as possible.
+
+
+Add previous play variable (-1 for new possession team)
+
+
+Next Step: Create new model to predict passing yards gained for all passes.
+
+#Passing Yards
+```{r}
+pass_yard_data = data %>% 
+  filter(!is.na(data$PassResult)) %>% 
+  filter(!grepl("INTERCEPTED", playDescription)) %>% 
+  filter(!grepl("FUMBLES", playDescription)) %>% 
+  filter(isPenalty == FALSE) %>% 
+  filter(PassResult == "C")
+```
+
+Average yards gained per pass
+```{r}
+mean(pass_yard_data$PlayResult)
+median(pass_yard_data$PlayResult)
+```
+
+
+```{r}
+pass_yard_data = subset(pass_yard_data, select = c(playId, quarter, GameClock, down, yardsToGo, score_diff, yardsToEndzone, PassResult, PlayResult, pred))
+```
+
+```{r}
+ggplot(pass_yard_data, mapping = aes(x = PlayResult)) + geom_histogram()
+```
+
+Normalize variable
+```{r}
+shift = abs(min(pass_yard_data$PlayResult))
+pass_yard_data$PlayResult = log(pass_yard_data$PlayResult + (shift + 1))
+```
+
+```{r}
+ggplot(pass_yard_data, mapping = aes(x = PlayResult)) + geom_histogram()
+```
+
+```{r, warning = FALSE}
+set.seed(2022)
+xgb.pass.yards = train(PlayResult ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = pass_yard_data,
+                       method = "xgbTree",
+                       metric = "RMSE",
+                       trControl = my_ctrl,
+                       objective = 'reg:squarederror',
+                       verbosity = 0)
+```
+
+```{r}
+xgb.pass.yards
+```
+
+
+Add predictions to dataframe
+```{r}
+decision_data = data
+decision_data$pass_yard_pred = exp(predict(xgb.pass.yards, data)) - shift - 1
+```
+
+Predicted average passing yards
+```{r}
+mean(decision_data$pass_yard_pred)
+```
+
+
+#Pass Completion
+```{r}
+pass_comp_data = data %>% 
+  filter(!is.na(data$PassResult)) %>% 
+  filter(isPenalty == FALSE) %>% 
+  filter(PassResult != "S" & PassResult != "R")
+pass_comp_data$PassResult = ifelse(pass_comp_data$PassResult == "IN", "I", pass_comp_data$PassResult)
+```
+
+```{r}
+pass_comp_data = subset(pass_comp_data, select = c(playId, quarter, GameClock, down, yardsToGo, score_diff, yardsToEndzone, PassResult, PlayResult, pred))
+```
+
+```{r, warning=FALSE}
+set.seed(2022)
+xgb.comp.prob = train(PassResult ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = pass_comp_data,
+                       method = "xgbTree",
+                       metric = my_metric,
+                       trControl = my_ctrl,
+                       objective = "binary:logistic",
+                       verbosity = 0)
+```
+
+```{r}
+pass_probs = predict(xgb.comp.prob, data, type = "prob")
+decision_data$pass_comp_prob = pass_probs$C
+```
+
+```{r}
+ggplot(decision_data, mapping = aes(x = pass_comp_prob)) + geom_histogram()
+```
+
+```{r}
+mean(decision_data$pass_comp_prob)
+```
+
+
+#Running Yards
+
+```{r}
+run_yard_data = data %>% 
+  filter(is.na(data$PassResult)) %>% 
+  filter(isPenalty == FALSE)
+```
+
+Average yards gained per run
+```{r}
+mean(run_yard_data$PlayResult)
+```
+
+```{r}
+run_yard_data = subset(run_yard_data, select = c(playId, quarter, GameClock, down, yardsToGo, score_diff, yardsToEndzone, PlayResult, pred))
+```
+
+```{r}
+ggplot(run_yard_data, mapping = aes(x = PlayResult)) + geom_histogram()
+```
+
+
+```{r, warning=FALSE}
+set.seed(2022)
+xgb.run.yards = train(PlayResult ~ quarter + down + GameClock + yardsToGo + score_diff + yardsToEndzone, data = run_yard_data,
+                       method = "xgbTree",
+                       metric = "RMSE",
+                       trControl = my_ctrl,
+                       objective = 'reg:squarederror',
+                       verbosity = 0)
+```
+
+```{r}
+xgb.run.yards
+```
+
+```{r}
+decision_data$run_yard_pred = predict(xgb.run.yards, data)
+```
+
+```{r}
+decision_data$exp.pass.yards = decision_data$pass_yard_pred * decision_data$pass_comp_prob
+```
+
+Average Predicted Rushing Yards
+```{r}
+mean(decision_data$run_yard_pred)
+```
+
+Average Expected Passing Yards
+```{r}
+mean(decision_data$exp.pass.yards)
+```
+
+```{r}
+ggplot(decision_data, mapping = aes(x = pass_yard_pred)) + geom_histogram()
+```
+```{r}
+ggplot(decision_data, mapping = aes(x = run_yard_pred)) + geom_histogram()
+```
+#Which teams were the most unpredictable
+```{r}
+incorrect = data %>% 
+  mutate(type = play_data$type) %>% 
+  filter(play_data$type != pred)
+```
+
+```{r}
+team_play_count = data %>% 
+  group_by(possessionTeam) %>% 
+  summarise(
+    Count = n()
+  )
+```
+
+```{r}
+team_incorrect = incorrect %>% 
+  group_by(possessionTeam) %>% 
+  summarise(
+    Count = n(),
+    Unpred_percent = Count / team_play_count$Count
+  ) %>% distinct(possessionTeam, .keep_all = TRUE)
+```
+
+Most unpredictable
+```{r}
+team_incorrect %>% arrange(desc(Unpred_percent))
+```
+Most predictable
+```{r}
+team_incorrect %>% arrange(Unpred_percent)
+```
+```{r}
+team = team_incorrect$possessionTeam
+wins = c(8,10,9,9,11,5,7,0,9,5,9,7,4,4,10,10,11,9,6,13,13,11,3,5,6,13,13,9,6,5,9,7)
+standings = data.frame(team, wins)
+standings$losses = 16 - standings$wins
+```
+
+```{r}
+results = standings %>% 
+  left_join(team_incorrect, by = c("team" = "possessionTeam"))
+```
+
+
