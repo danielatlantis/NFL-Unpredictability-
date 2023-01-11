@@ -11,4 +11,24 @@ The dataset used for this project was read directly from the NFL Big Data Bowl�
 Several models were fit using quarter, down, time remaining, first down distance, score differential, and distance from endzone. The results of the models are grouped together in the graph below:
 
 ![Model Comparison](models.png)
+The gradient boosted tree performed the best with a play prediction accuracy of around 70%. This is the model that was used to make the final play predictions on the dataset.
+
+![Variables](varimp.png)
+The down variable was identified as the most important variable in the model and based off the bar graph that was analyzed above as down increases the likelihood of a pass would see a significant increase. Other significant variables included the time remaining (GameClock), first down distance (yardsToGo), and score differential (score_diff). It is very interesting that the distance from endzone was not considered to be important in the model prediction since teams are usually more likely to run as they get closer to the endzone. 
+
+![Time](pred_time.png)
+The predicted probability of a pass compared to time remaining is for the most part very random, but at around the thirty-minute mark and when there is little time remaining the probability of pass being close to one is much more likely. Especially, at the thirty-minute mark, just before halftime, as passing becomes much more common for NFL teams. At the end of games, there is also a cluster of extremely low pass probabilities, these situations represent teams that have a large lead and are trying to “run the clock out” so that the other team has little time left to make a comeback and win the game.
+
+![Down and Distance](yardsToGo.png)
+The next graph pictured above depicts pass probability in respect to down and first down distance. First downs all typically start with the same standard distance of ten yards, however penalties can change exactly how far the play is from the first down. As predicted, first down and ten yards has an extremely wide range of values that go from close to zero to one. Second and third down both follow a similar trend as one another, which is as distance decreases the expected likelihood of a pass decreases. This same trend becomes extreme in the fourth down graph and at distances further than two yards a pass is extremely likely but within two yards a run is much more likely.
+
+![Scores](score_pred.png)
+As the difference between the offense’s score and the defense’s score increases the predicted probability of a pass decreases. In games where the scores are close it is much harder to predict whether the play will be a run or pass since running or passing doesn’t inherently benefit the team in a specific way.
+
+The next step of the project was building three new models: one to predict the expected yards gained for a completion, one to calculate the probability of completing a pass, and another to predict expected yards gained for a run. Expected passing yards was calculated using the following formula:
+
+Exp.Passing Yards=Predicted Passing Yards*Predicted Completion Probability
+
+The average yards per completion in the NFL over the first six weeks of the 2017 season was eleven yards and the average yards per run over that same span was around four yards, so to no surprise, the predicted passing yards was almost always larger than predicted running yards. However, when the probability of completing a pass was taken into account the difference in expected yards gained for both a pass and a run only differed by a yard on average and in some cases, runs were identified as better than passes. These scenarios often occurred when the offense was either at the goal line or close to their own endzone where passing is very risky. The average pass completion probability from the model was 63% and, in the NFL, the average completion percentage is around 67% so the model isn’t far off from the actual average. 
+
 
