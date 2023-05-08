@@ -1,5 +1,7 @@
 # NFL Unpredictability
 
+<img src="https://images.wsj.net/im-50106/IM" height="80%">
+
 ## Introduction 
 My data comes from the 2017-2018 NFL Big Data Bowl contest repository on Github. The dataset I used for this project contained play data from every game for the first 6 weeks of the 2017 NFL regular season. The goal of the project is to be able to accurately predict whether or not a play will be a run or a pass based on various factors such as down, first-down distance, distance from endzone, and more.
 This model’s main purpose is to measure how unpredictable NFL teams are with play calls and if unpredictability can lead to success. The job of an NFL coach is to be unpredictable with their play calls so that the opposite team can’t predict whether the play will be a run or a pass. At the end of the project, I will be able to determine which teams were the most unpredictable over the first 6 weeks, and if being unpredictable led to more success. As far as I have seen, this topic hasn’t been widely researched on a play-by-play level which seems odd since play-calling is a big part of a coach’s job and can really dictate the success of a team if done correctly, or if not done correctly, can become an extreme detriment of the team.
