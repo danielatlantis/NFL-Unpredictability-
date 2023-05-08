@@ -1,6 +1,6 @@
 # NFL Unpredictability
 
-<img src="https://images.wsj.net/im-50106/IM" height="80%">
+<img src="https://images.wsj.net/im-50106/IM" height="40%">
 
 ## Introduction 
 My data comes from the 2017-2018 NFL Big Data Bowl contest repository on Github. The dataset I used for this project contained play data from every game for the first 6 weeks of the 2017 NFL regular season. The goal of the project is to be able to accurately predict whether or not a play will be a run or a pass based on various factors such as down, first-down distance, distance from endzone, and more.
